@@ -11,6 +11,6 @@ enum class Error {
 	BadStringLiteral,
 };
 
-std::vector<uint8_t> import();
+std::vector<uint8_t> import(FILE *input);	// TODO: use C++ iostream here.
 
 }

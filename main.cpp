@@ -3,7 +3,7 @@
 #include <iostream>
 
 int main(int argc, char *argv[]) {
-	const auto result = Tokeniser::import();
+	const auto result = Tokeniser::import(stdin);
 	
 	FILE *target = fopen("out.uef", "wb");
 
@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
 	fputc(0, target);
 	fclose(target);
 
-	// Write lead-in tone. 2/4
+	// Write lead-in tone.
 	fputc(0x11, target);	fputc(0x01, target);
 
 	std::cout << "Produced " << result.size() << " bytes:" << std::endl;

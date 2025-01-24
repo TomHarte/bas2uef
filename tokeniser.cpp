@@ -4,6 +4,14 @@
 #include <cstdio>
 #include <map>
 
+/*
+	Implements parsing of BBC BASIC v2.
+
+	Heavily based on the descriptions provided by Mark Plumbley in
+	BASIC ROM User Guide, ISBN 0 947929 04 5, section 2.3.
+*/
+
+
 namespace {
 
 template <typename NodeKeyT, typename ValueT>
@@ -52,9 +60,6 @@ struct Keyword {
 	uint8_t flags = 0;
 };
 
-/*
-	Cf. pages 41-43 of the BASIC ROM User Guide by Mark Plumbley.
-*/
 const Trie<char, Keyword> tokens = {
 	{"AND",			{0x80}},
 	{"DIV",			{0x81}},
@@ -189,8 +194,10 @@ const Trie<char, Keyword> tokens = {
 
 namespace Tokeniser {
 
-std::vector<uint8_t> import() {
+std::vector<uint8_t> import(FILE *input) {
 	struct Importer {
+		Importer(FILE *input) : input_(input) {}
+
 		void tokenise() {
 			while(true) {
 				// Consume whitespace.
@@ -204,19 +211,7 @@ std::vector<uint8_t> import() {
 				if(feof(input_)) break;
 
 				// Get line number.
-				auto num = next();
-				if(!isnumber(num)) {
-					throw Error::NoLineNumber;
-				}
-				int line_number = 0;
-				do {
-					line_number = (line_number * 10) + (num - '0');
-					if(line_number > 0xfeff) {
-						throw Error::BadLineNumber;
-					}
-					num = next();
-				} while(isnumber(num));
-				replace(num);
+				const auto line_number = read_line_number();
 
 				// Write start of line, including line number.
 				result.push_back(0x0d);
@@ -243,21 +238,8 @@ std::vector<uint8_t> import() {
 	private:
 		void tokenise_line() {
 			bool statement_start = true;
-			bool conditional = false;
 
 			while(!feof(input_)) {
-				// If conditional and alphanumeric, write a single character and continue.
-				if(conditional) {
-					const auto ch = next();
-					if(isalnum(ch)) {
-						conditional = false;
-						result.push_back(ch);
-						continue;
-					} else {
-						replace(ch);
-					}
-				}
-
 				// Check for a new token.
 				std::string input_text;
 				auto node = &tokens;
@@ -274,7 +256,22 @@ std::vector<uint8_t> import() {
 					}
 				}
 
-				if(node && node->value()) {
+				// If a token was found and is conditional, check whether to tokenise.
+				if(node && node->value()->flags & Flags::Conditional) {
+					auto ch = next();
+					if(isalnum(ch)) {
+						// Don't treat as a token then.
+						std::copy(input_text.begin(), input_text.end(), std::back_inserter(result));
+						while(isalnum(ch)) {
+							result.push_back(ch);
+							ch = next();
+						}
+						replace(ch);
+						continue;
+					}
+				}
+
+				if(node) {
 					const auto &keyword = *node->value();
 					result.push_back(keyword.token);
 
@@ -310,115 +307,112 @@ std::vector<uint8_t> import() {
 
 					statement_start &= !(keyword.flags & Flags::Middle);
 					statement_start |= keyword.flags & Flags::Start;
-				} else {
-					const auto ch = next();
-					if(ch == '\n') return;
+					continue;
+				}
 
-					result.push_back(ch);
-					switch(ch) {
-						case ':':
-							statement_start = true;
-						break;
+				// If here: no token was found. So copy at least one character
+				// from the input and possibly more.
+				const auto ch = next();
+				if(ch == '\n') return;
 
-						case '*':
-							if(statement_start) {
-								while(true) {
-									const auto ch = next();
-									if(ch == '\n' || feof(input_)) {
-										return;
-									}
-									result.push_back(ch);
-								}
-							}
-						break;
+				const bool was_start = statement_start;
+				statement_start = false;
+				result.push_back(ch);
+				switch(ch) {
+					case ':':
+						// Go back into start mode after each colon.
+						statement_start = true;
+					break;
 
-						case '"':
+					case '*':
+						// If a * is encountered while in start mode, blindly copy from it to
+						// the end of the line.
+						if(was_start) {
 							while(true) {
 								const auto ch = next();
-								result.push_back(ch);
-								if(ch == '\n') throw Error::BadStringLiteral;
-								if(ch == '"') break;
-								if(feof(input_)) throw Error::BadStringLiteral;
-							}
-						break;
-
-						default:
-							// Tokenise entire variable names in one go.
-							if(isalpha(ch)) {
-								while(true) {
-									const auto ch = next();
-									if(!isalnum(ch)) {
-										replace(ch);
-										break;
-									}
-									result.push_back(ch);
+								if(ch == '\n' || feof(input_)) {
+									return;
 								}
+								result.push_back(ch);
 							}
-						break;
-					}
-					statement_start = false;
+						}
+					break;
+
+					case '"':
+						// Copy an entire string.
+						while(true) {
+							const auto ch = next();
+							result.push_back(ch);
+							if(ch == '\n') throw Error::BadStringLiteral;
+							if(ch == '"') break;	// TODO: is this written out?
+							if(feof(input_)) throw Error::BadStringLiteral;
+						}
+					break;
+
+					case '&':
+						// Copy an entire hex number.
+						while(true) {
+							const auto ch = next();
+							const bool is_hex =
+								(ch >= '0' && ch <= '9') ||
+								(ch >= 'A' && ch <= 'F');
+							if(!is_hex) {
+								replace(ch);
+								break;
+							}
+							result.push_back(ch);
+						}
+					break;
+
+					default:
+						// This is a variable name or number, copy it all.
+						if(isalpha(ch)) {
+							while(true) {
+								const auto ch = next();
+								if(!isalnum(ch)) {
+									replace(ch);
+									break;
+								}
+								result.push_back(ch);
+							}
+						}
+					break;
 				}
 			}
 		}
 		
-		void tokenise_line_number() {
-			while(!feof(input_)) {
-				
+		int read_line_number() {
+			auto num = next();
+			if(!isdigit(num)) {
+				throw Error::NoLineNumber;
 			}
-			//	while(!ErrorNum && !EndOfFile)
-			//	{
-			//		if(NumberStart)
-			//		{
-			//			// tokenise line number
-			//			Uint16 LineNumber = NumberValue ^ 0x4040;
+			int line_number = 0;
+			do {
+				line_number = (line_number * 10) + (num - '0');
+				if(line_number > 32767) {
+					throw Error::BadLineNumber;
+				}
+				num = next();
+			} while(isdigit(num));
+			replace(num);
+			return line_number;
+		}
+
+		void tokenise_line_number() {
+			// PrŽcis on format:
 			//
-			//			WriteByte(0x8d);
-			//
-			//			WriteByte(((LineNumber&0xc0) >> 2) | ((LineNumber&0xc000) >> 12) | 0x40);
-			//			WriteByte((LineNumber&0x3f) | 0x40);
-			//			WriteByte(((LineNumber >> 8)&0x3f) | 0x40);
-			//
-			//			EatCharacters(NumberLength);
-			//		}
-			//		else
-			//			switch(Token)
-			//			{
-			//				// whitespace and commas do not cause this mode to exit
-			//				case ' ':
-			//				case ',':
-			//					WriteByte(Token);
-			//					EatCharacters(1);
-			//				break;
-			//
-			//				// hex numbers get through unscathed too
-			//				case '&':
-			//					WriteByte(Token);
-			//					EatCharacters(1);
-			//
-			//					while(
-			//						!ErrorNum &&
-			//						!EndOfFile &&
-			//						(
-			//							(IncomingBuffer[0] >= '0' && IncomingBuffer[0] <= '9') ||
-			//							(IncomingBuffer[0] >= 'A' && IncomingBuffer[0] <= 'F')
-			//						)
-			//					)
-			//					{
-			//						WriteByte(IncomingBuffer[0]);
-			//						EatCharacters(1);
-			//					}
-			//				break;
-			//
-			//				/* grab strings without tokenising numbers */
-			//				case '"':
-			//					if(!CopyStringLiteral())
-			//						return false;
-			//				break;
-			//
-			//				/* default action is to turn off line number tokenising and get back to normal */
-			//				default: return true;
-			//			}
-			//	}
+			// $8d is the token for a line number; the three subsequent bytes all have
+			// 01 as their top two bits and some other portion of the original bits beneath.
+			// Bit 6 of both bytes of the target line number is inverted.
+
+			const int number = read_line_number() ^ 0b0100'0000'0100'0000;
+			const auto high = uint8_t(number >> 8);
+			const auto low = uint8_t(number);
+
+			result.push_back(0x8d);
+			result.push_back(0b0100'0000 | ((high & 0b1100'0000) >> 2) | ((low & 0b1100'0000) >> 4));
+			result.push_back(0b0100'0000 | (high & 0b0011'1111));
+			result.push_back(0b0100'0000 | (low & 0b0011'1111));
 		}
 
 		void replace(const std::string &n) {
@@ -450,7 +444,7 @@ std::vector<uint8_t> import() {
 	private:
 		FILE *input_ = stdin;
 		std::string next_;
-	} importer;
+	} importer(input);
 	importer.tokenise();
 
 	// Append "end of program".
