@@ -51,8 +51,8 @@ public:
 			if(append_crc) {
 				CRC::Generator<uint16_t, 0x0000, 0x0000, false, false> crc_generator(0x1021);
 				const uint16_t crc = crc_generator.compute_crc(begin, end);
-				chunk_contents_.push_back(uint8_t(crc >> 0));
 				chunk_contents_.push_back(uint8_t(crc >> 8));
+				chunk_contents_.push_back(uint8_t(crc >> 0));
 			}
 		}
 
@@ -102,8 +102,8 @@ int main(int argc, char *argv[]) try {
 		std::advance(begin, length);
 
 		auto block = writer.chunk(0x0100);
+		block.append(std::vector<uint8_t>{ 0x2a });					// Synchronisation byte.
 		block.append(std::vector<uint8_t>{
-			0x2a,													// Synchronisation byte.
 			'B', 'A', 'S', 'I', 'C', 0x00,							// File name, with terminator.
 			0x00, 0x19, 0x00, 0x00,									// Load address.
 			0x23, 0x80, 0x00, 0x00,									// Execution address.
