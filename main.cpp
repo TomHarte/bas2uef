@@ -4,11 +4,19 @@
 #include <cstdint>
 #include <iostream>
 
-int main(int argc, char *argv[]) {
+namespace {
+
+struct UEFWriter {
+	
+};
+
+}
+
+int main(int argc, char *argv[]) try {
 	const auto result = Tokeniser::import(stdin);
 
 //	CRC::Generator<uint16_t, 0x0000, 0x0000, false, false> crc_(0x1021);
-	FILE *target = fopen("out.uef", "wb");
+	FILE *const target = fopen("out.uef", "wb");
 
 	// UEF: write header.
 	fputs("UEF File!", target);
@@ -27,4 +35,6 @@ int main(int argc, char *argv[]) {
 	std::cout << std::endl;
 
 	return 0;
+} catch(const Tokeniser::Error &error) {
+	std::cout << "ERROR: " << error.to_string() << std::endl;
 }

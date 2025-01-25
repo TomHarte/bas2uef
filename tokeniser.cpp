@@ -1,4 +1,5 @@
 #include "tokeniser.hpp"
+#include "tokeniser.hpp"
 
 #include <cctype>
 #include <cstdio>
@@ -227,12 +228,11 @@ std::vector<uint8_t> import(FILE *input) {
 				
 				// Set line length.
 				const auto line_length = 3 + result.size() - size_position;
-				if(line_length > 255) throw Error::LineTooLong;
+				if(line_length > 255) throw_error(Error::Type::LineTooLong);
 				result[size_position] = uint8_t(line_length);
 			}
 		}
 
-		int line = 1;
 		std::vector<uint8_t> result;
 
 	private:
@@ -343,9 +343,9 @@ std::vector<uint8_t> import(FILE *input) {
 						while(true) {
 							const auto ch = next();
 							result.push_back(ch);
-							if(ch == '\n') throw Error::BadStringLiteral;
+							if(ch == '\n') throw_error(Error::Type::BadStringLiteral);
 							if(ch == '"') break;	// TODO: is this written out?
-							if(feof(input_)) throw Error::BadStringLiteral;
+							if(feof(input_)) throw_error(Error::Type::BadStringLiteral);
 						}
 					break;
 
@@ -384,13 +384,13 @@ std::vector<uint8_t> import(FILE *input) {
 		int read_line_number() {
 			auto num = next();
 			if(!isdigit(num)) {
-				throw Error::NoLineNumber;
+				throw_error(Error::Type::NoLineNumber);
 			}
 			int line_number = 0;
 			do {
 				line_number = (line_number * 10) + (num - '0');
 				if(line_number > 32767) {
-					throw Error::BadLineNumber;
+					throw_error(Error::Type::BadLineNumber);
 				}
 				num = next();
 			} while(isdigit(num));
@@ -416,10 +416,12 @@ std::vector<uint8_t> import(FILE *input) {
 		}
 
 		void replace(const std::string &n) {
+			for(const auto c: n) source_line_ -= c == '\n';
 			next_.insert(next_.end(), n.rbegin(), n.rend());
 		}
 
 		void replace(char n) {
+			source_line_ -= n == '\n';
 			next_.push_back(n);
 		}
 
@@ -437,13 +439,18 @@ std::vector<uint8_t> import(FILE *input) {
 			} while(next == '\r');
 			if(feof(input_)) return 0;
 
-			if(next == '\n') ++line;
+			source_line_ += next == '\n';
 			return static_cast<char>(next);
 		}
 
 	private:
 		FILE *input_ = stdin;
 		std::string next_;
+		int source_line_ = 1;
+
+		void throw_error(Error::Type type) const {
+			throw Error{type, source_line_};
+		}
 	} importer(input);
 	importer.tokenise();
 
@@ -454,4 +461,3 @@ std::vector<uint8_t> import(FILE *input) {
 }
 
 }
-	

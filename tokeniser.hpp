@@ -4,13 +4,33 @@
 
 namespace Tokeniser {
 
-enum class Error {
-	NoLineNumber,
-	BadLineNumber,
-	LineTooLong,
-	BadStringLiteral,
+struct Error {
+	enum class Type {
+		NoLineNumber,
+		BadLineNumber,
+		LineTooLong,
+		BadStringLiteral,
+	};
+
+	Type type;
+	int line_number;
+
+	std::string to_string() const {
+		return [&]() -> std::string {
+			switch(type) {
+				case Type::NoLineNumber:		return "NoLineNumber";
+				case Type::BadLineNumber:		return "BadLineNumber";
+				case Type::LineTooLong:			return "LineTooLong";
+				case Type::BadStringLiteral:	return "BadStringLiteral";
+			}
+		}() + " at line " + std::to_string(line_number);
+	}
 };
 
-std::vector<uint8_t> import(FILE *input);	// TODO: use C++ iostream here.
+/// Returns a tokenised version of the textual BASIC program found in the input stream.
+///
+/// @param source A stream of text describing a BBC BASIC program.
+/// @throws An instance of @c Error if any problem is encountered.
+std::vector<uint8_t> import(FILE *source);
 
 }
