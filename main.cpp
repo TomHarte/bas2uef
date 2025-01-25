@@ -3,14 +3,19 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <exception>
 #include <iostream>
 
 namespace {
 
 struct UEFWriter {
 public:
-	UEFWriter(const char *file_name) {
-		file_ = fopen(file_name, "wb");
+	UEFWriter(const std::string &file_name) {
+		file_ = fopen(file_name.c_str(), "wb");
+		if(!file_) {
+			throw std::runtime_error(std::string("Unable to open for output: ") + file_name);
+		}
 
 		// Write header.
 		fputs("UEF File!", file_);
@@ -79,12 +84,52 @@ private:
 	FILE *file_ = nullptr;
 };
 
+void print_help() {
+	std::cout << "usage: bas2uef [-i input file] [-o output file]" << std::endl;
+}
+
 }
 
 int main(int argc, char *argv[]) try {
-	const auto result = Tokeniser::import(stdin);
+	std::string output = "out.uef";
+	std::string input = "";
 
-	UEFWriter writer("out.uef");
+	// Do a negligible parsing of command-line options.
+	for(int c = 1; c < argc; c++) {
+		if(c == argc - 1) {
+			print_help();
+			return -1;
+		}
+
+		if(std::string("-o") == argv[c]) {
+			output = argv[c + 1];
+			++c;
+			continue;
+		}
+
+		if(std::string("-i") == argv[c]) {
+			input = argv[c + 1];
+			++c;
+			continue;
+		}
+
+		print_help();
+		return -1;
+	}
+
+	// Read from file or from stdin if none was specified.
+	FILE *const in = input.empty() ? stdin : fopen(input.c_str(), "rt");
+	if(!in) {
+		std::cerr << "Couldn't open " << input << std::endl;
+		return -1;
+	}
+	const auto result = Tokeniser::import(in);
+	if(in != stdin) {
+		fclose(in);
+	}
+
+	// Always output to a file as this is primarily binary data.
+	UEFWriter writer(output);
 	writer.chunk(0x0000).append("bas2uef v1.0");
 
 	// Write high tone with a dummy byte.
@@ -120,13 +165,9 @@ int main(int argc, char *argv[]) try {
 		}
 	}
 
-	std::cout << "Produced " << result.size() << " bytes:" << std::endl;
-	for(const auto &byte: result) {
-		printf("%02x ", byte);
-	}
-	std::cout << std::endl;
-
 	return 0;
 } catch(const Tokeniser::Error &error) {
 	std::cout << "ERROR: " << error.to_string() << std::endl;
+} catch(std::exception &error) {
+	std::cout << "ERROR: " << error.what() << std::endl;
 }
