@@ -212,7 +212,7 @@ std::vector<uint8_t> import(FILE *input) {
 				if(feof(input_)) break;
 
 				// Get line number.
-				const auto line_number = read_line_number();
+				const auto line_number = read_line_number(false);
 
 				// Write start of line, including line number.
 				result.push_back(0x0d);
@@ -269,6 +269,7 @@ std::vector<uint8_t> import(FILE *input) {
 						replace(ch);
 						continue;
 					}
+					replace(ch);
 				}
 
 				if(node) {
@@ -381,7 +382,7 @@ std::vector<uint8_t> import(FILE *input) {
 			}
 		}
 		
-		int read_line_number() {
+		int read_line_number(bool retain_whitespace) {
 			while(true) {
 				const auto num = next();
 				if(isdigit(num)) {
@@ -390,6 +391,9 @@ std::vector<uint8_t> import(FILE *input) {
 				}
 				if(!isspace(num)) {
 					throw_error(Error::Type::NoLineNumber);
+				}
+				if(retain_whitespace) {
+					result.push_back(num);
 				}
 			}
 
@@ -415,14 +419,14 @@ std::vector<uint8_t> import(FILE *input) {
 			// 01 as their top two bits and some other portion of the original bits beneath.
 			// Bit 6 of both bytes of the target line number is inverted.
 
-			const int number = read_line_number() ^ 0b0100'0000'0100'0000;
+			const int number = read_line_number(true) ^ 0b0100'0000'0100'0000;
 			const auto high = uint8_t(number >> 8);
 			const auto low = uint8_t(number);
 
 			result.push_back(0x8d);
-			result.push_back(0b0100'0000 | ((high & 0b1100'0000) >> 2) | ((low & 0b1100'0000) >> 4));
-			result.push_back(0b0100'0000 | (high & 0b0011'1111));
+			result.push_back(0b0100'0000 | ((low & 0b1100'0000) >> 2) | ((high & 0b1100'0000) >> 4));
 			result.push_back(0b0100'0000 | (low & 0b0011'1111));
+			result.push_back(0b0100'0000 | (high & 0b0011'1111));
 		}
 
 		void replace(const std::string &n) {
