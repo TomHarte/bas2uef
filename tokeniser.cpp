@@ -243,17 +243,31 @@ std::vector<uint8_t> import(FILE *input) {
 				// Check for a new token.
 				std::string input_text;
 				auto node = &tokens;
+
+				const decltype (tokens) *last_found = nullptr;
+				size_t last_found_depth = 0;
 				while(true) {
+					// Keep track of last node that had any sort of value.
+					if(node->value()) {
+						last_found = node;
+						last_found_depth = input_text.size();
+					}
+
 					const auto ch = next();
 					input_text.push_back(ch);
-					node = node->find(ch);
-					if(!node) {
-						replace(input_text);
+
+					// Search should find the longest token that matches
+					// so don't stop until a dead-end is found.
+					const auto next_node = node->find(ch);
+					if(!next_node) {
+						// Retreat to the last observed match, if any.
+						node = last_found;
+						replace(input_text.substr(last_found_depth));
+						input_text = input_text.substr(0, last_found_depth);
 						break;
 					}
-					if(node->value()) {
-						break;
-					}
+
+					node = next_node;
 				}
 
 				// If a token was found and is conditional, check whether to tokenise.
