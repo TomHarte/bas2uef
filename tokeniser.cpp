@@ -382,19 +382,29 @@ std::vector<uint8_t> import(FILE *input) {
 		}
 		
 		int read_line_number() {
-			auto num = next();
-			if(!isdigit(num)) {
-				throw_error(Error::Type::NoLineNumber);
+			while(true) {
+				const auto num = next();
+				if(isdigit(num)) {
+					replace(num);
+					break;
+				}
+				if(!isspace(num)) {
+					throw_error(Error::Type::NoLineNumber);
+				}
 			}
+
 			int line_number = 0;
-			do {
+			while(true) {
+				const auto num = next();
+				if(!isdigit(num)) {
+					replace(num);
+					break;
+				}
 				line_number = (line_number * 10) + (num - '0');
 				if(line_number > 32767) {
 					throw_error(Error::Type::BadLineNumber);
 				}
-				num = next();
-			} while(isdigit(num));
-			replace(num);
+			};
 			return line_number;
 		}
 
@@ -429,6 +439,7 @@ std::vector<uint8_t> import(FILE *input) {
 			if(!next_.empty()) {
 				const auto n = next_.back();
 				next_.pop_back();
+				source_line_ += n == '\n';
 				return n;
 			}
 
