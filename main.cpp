@@ -1,10 +1,13 @@
-#include "tokeniser.h"
+#include "tokeniser.hpp"
+#include "CRC.hpp"
 
+#include <cstdint>
 #include <iostream>
 
 int main(int argc, char *argv[]) {
 	const auto result = Tokeniser::import(stdin);
-	
+
+//	CRC::Generator<uint16_t, 0x0000, 0x0000, false, false> crc_(0x1021);
 	FILE *target = fopen("out.uef", "wb");
 
 	// UEF: write header.
