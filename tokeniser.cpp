@@ -305,6 +305,8 @@ private:
 			if(ch == '\n') return;
 
 			result.push_back(ch);
+			const bool was_start = statement_start;
+			statement_start = false;
 			switch(ch) {
 				case ':':
 					// Go back into start mode after each colon.
@@ -314,7 +316,7 @@ private:
 				case '*':
 					// If a * is encountered while in start mode, blindly copy from it to
 					// the end of the line.
-					if(statement_start) {
+					if(was_start) {
 						copy_while([](int) { return true; });
 					}
 				break;
