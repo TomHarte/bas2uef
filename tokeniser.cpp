@@ -12,7 +12,7 @@
 	BASIC ROM User Guide, ISBN 0 947929 04 5, section 2.3.
 */
 
-
+namespace Tokeniser {
 namespace {
 
 template <typename NodeKeyT, typename ValueT>
@@ -24,7 +24,7 @@ struct Trie {
 		}
 	}
 
-	const Trie *find(NodeKeyT key) const {
+	const Trie *find(const NodeKeyT key) const {
 		const auto it = children_.find(key);
 		if(it == children_.end()) return nullptr;
 		return &it->second;
@@ -191,296 +191,271 @@ const Trie<char, Keyword> tokens = {
 	{"OSCLI",		{0xff, Middle}},
 };
 
-}
+struct Importer {
+	Importer(FILE *const input) : input_(input) {}
 
-namespace Tokeniser {
+	void tokenise() {
+		while(!feof(input_)) {
+			// Get line number.
+			const auto line_number = read_line_number(false);
 
-std::vector<uint8_t> import(FILE *input) {
-	struct Importer {
-		Importer(FILE *input) : input_(input) {}
+			// Write start of line, including line number.
+			result.push_back(0x0d);
+			result.push_back(uint8_t(line_number >> 8));
+			result.push_back(uint8_t(line_number));
 
-		void tokenise() {
-			while(true) {
-				// Consume whitespace.
-				while(true) {
-					const auto ch = next();
-					if(!isspace(ch)) {
-						replace(ch);
-						break;
-					}
-				}
-				if(feof(input_)) break;
+			// Reserve a spot for line length.
+			const auto size_position = result.size();
+			result.push_back(0);
 
-				// Get line number.
-				const auto line_number = read_line_number(false);
+			// Encode line.
+			tokenise_line();
 
-				// Write start of line, including line number.
-				result.push_back(0x0d);
-				result.push_back(uint8_t(line_number >> 8));
-				result.push_back(uint8_t(line_number));
-
-				// Reserve a spot for line length.
-				const auto size_position = result.size();
-				result.push_back(0);
-
-				// Encode line.
-				tokenise_line();
-				
-				// Set line length.
-				const auto line_length = 3 + result.size() - size_position;
-				if(line_length > 255) throw_error(Error::Type::LineTooLong);
-				result[size_position] = uint8_t(line_length);
-			}
+			// Set line length.
+			const auto line_length = 3 + result.size() - size_position;
+			if(line_length > 255) throw_error(Error::Type::LineTooLong);
+			result[size_position] = uint8_t(line_length);
 		}
+	}
 
-		std::vector<uint8_t> result;
+	std::vector<uint8_t> result;
 
-	private:
-		void tokenise_line() {
-			bool statement_start = true;
+private:
+	void tokenise_line() {
+		bool statement_start = true;
 
-			while(!feof(input_)) {
-				// Check for a new token.
-				std::string input_text;
-				auto node = &tokens;
+		while(!feof(input_)) {
+			// Check for a new token.
+			std::string input_text;
+			auto node = &tokens;
 
-				const decltype (tokens) *last_found = nullptr;
-				size_t last_found_depth = 0;
-				while(true) {
-					// Keep track of last node that had any sort of value.
-					if(node->value()) {
-						last_found = node;
-						last_found_depth = input_text.size();
-					}
-
-					const auto ch = next();
-					input_text.push_back(ch);
-
-					// Search should find the longest token that matches
-					// so don't stop until a dead-end is found.
-					const auto next_node = node->find(ch);
-					if(!next_node) {
-						// Retreat to the last observed match, if any.
-						node = last_found;
-						replace(input_text.substr(last_found_depth));
-						input_text = input_text.substr(0, last_found_depth);
-						break;
-					}
-
-					node = next_node;
+			const decltype (tokens) *last_found = nullptr;
+			size_t last_found_depth = 0;
+			while(true) {
+				// Keep track of last node that represented a complete token.
+				if(node->value()) {
+					last_found = node;
+					last_found_depth = input_text.size();
 				}
 
-				// If a token was found and is conditional, check whether to tokenise.
-				if(node && node->value()->flags & Flags::Conditional) {
-					auto ch = next();
-					if(isalnum(ch)) {
-						// Don't treat as a token then.
-						std::copy(input_text.begin(), input_text.end(), std::back_inserter(result));
-						while(isalnum(ch)) {
-							result.push_back(ch);
-							ch = next();
-						}
-						replace(ch);
-						continue;
-					}
-					replace(ch);
+				// Keep a copy of characters encountered to get to the current state,
+				// in case a conditional token is arrived at and isn't ultimately tokenised.
+				const auto ch = next();
+				input_text.push_back(ch);
+
+				// Search should find the longest token that matches
+				// so don't stop until a dead-end is found.
+				const auto next_node = node->find(ch);
+				if(!next_node) {
+					// Retreat to the last observed match, if any.
+					node = last_found;
+					replace(input_text.substr(last_found_depth));
+					input_text = input_text.substr(0, last_found_depth);
+					break;
 				}
 
-				if(node) {
-					const auto &keyword = *node->value();
-					result.push_back(keyword.token);
+				// Keep searching.
+				node = next_node;
+			}
 
-					if(keyword.flags & Flags::FNProc) {
-						// Copy all alphanumerics (and underscores?)
-						while(true) {
-							const auto ch = next();
-							if(!isalnum(ch) && ch != '_') {
-								break;
-							}
-							if(ch == '\n' || feof(input_)) return;
-							result.push_back(ch);
-						}
-					}
-
-					if(keyword.flags & Flags::LineNumber) {
-						tokenise_line_number();
-					}
-
-					if(keyword.flags & Flags::REM) {
-						// Copy rest of line without tokenisation.
-						while(true) {
-							const auto ch = next();
-							if(ch == '\n' || feof(input_)) return;
-							result.push_back(ch);
-						}
-					}
-
-					if(statement_start && (keyword.flags & Flags::PseudoVariable)) {
-						// Adjust token.
-						result.back() += 0x40;
-					}
-
-					statement_start &= !(keyword.flags & Flags::Middle);
-					statement_start |= keyword.flags & Flags::Start;
+			// If a token was found and is conditional, check whether to tokenise.
+			if(node && node->value()->flags & Flags::Conditional) {
+				const auto ch = next();
+				if(isalnum(ch)) {
+					// Don't treat as a token then. Recover the text of this token and then copy in
+					// as many alphanumerics as follow.
+					std::copy(input_text.begin(), input_text.end(), std::back_inserter(result));
+					copy_while(isalnum);
 					continue;
 				}
-
-				// If here: no token was found. So copy at least one character
-				// from the input and possibly more.
-				const auto ch = next();
-				if(ch == '\n') return;
-
-				const bool was_start = statement_start;
-				statement_start = false;
-				result.push_back(ch);
-				switch(ch) {
-					case ':':
-						// Go back into start mode after each colon.
-						statement_start = true;
-					break;
-
-					case '*':
-						// If a * is encountered while in start mode, blindly copy from it to
-						// the end of the line.
-						if(was_start) {
-							while(true) {
-								const auto ch = next();
-								if(ch == '\n' || feof(input_)) {
-									return;
-								}
-								result.push_back(ch);
-							}
-						}
-					break;
-
-					case '"':
-						// Copy an entire string.
-						while(true) {
-							const auto ch = next();
-							result.push_back(ch);
-							if(ch == '\n') throw_error(Error::Type::BadStringLiteral);
-							if(ch == '"') break;	// TODO: is this written out?
-							if(feof(input_)) throw_error(Error::Type::BadStringLiteral);
-						}
-					break;
-
-					case '&':
-						// Copy an entire hex number.
-						while(true) {
-							const auto ch = next();
-							const bool is_hex =
-								(ch >= '0' && ch <= '9') ||
-								(ch >= 'A' && ch <= 'F');
-							if(!is_hex) {
-								replace(ch);
-								break;
-							}
-							result.push_back(ch);
-						}
-					break;
-
-					default:
-						// This is a variable name or number, copy it all.
-						if(isalpha(ch)) {
-							while(true) {
-								const auto ch = next();
-								if(!isalnum(ch)) {
-									replace(ch);
-									break;
-								}
-								result.push_back(ch);
-							}
-						}
-					break;
-				}
-			}
-		}
-		
-		int read_line_number(bool retain_whitespace) {
-			while(true) {
-				const auto num = next();
-				if(isdigit(num)) {
-					replace(num);
-					break;
-				}
-				if(!isspace(num)) {
-					throw_error(Error::Type::NoLineNumber);
-				}
-				if(retain_whitespace) {
-					result.push_back(num);
-				}
+				replace(ch);
 			}
 
-			int line_number = 0;
-			while(true) {
-				const auto num = next();
-				if(!isdigit(num)) {
-					replace(num);
-					break;
+			if(node) {
+				const auto &keyword = *node->value();
+				result.push_back(keyword.token);
+
+				if(keyword.flags & Flags::FNProc) {
+					// Copy all alphanumerics (and underscores?)
+					copy_while([](const int ch) { return isalnum(ch) || ch == '_'; });
 				}
-				line_number = (line_number * 10) + (num - '0');
-				if(line_number > 32767) {
-					throw_error(Error::Type::BadLineNumber);
+
+				if(keyword.flags & Flags::LineNumber) {
+					tokenise_line_number();
 				}
-			};
-			return line_number;
-		}
 
-		void tokenise_line_number() {
-			// PrŽcis on format:
-			//
-			// $8d is the token for a line number; the three subsequent bytes all have
-			// 01 as their top two bits and some other portion of the original bits beneath.
-			// Bit 6 of both bytes of the target line number is inverted.
+				if(keyword.flags & Flags::REM) {
+					// Copy rest of line without tokenisation.
+					copy_while([](int) { return true; });
+				}
 
-			const int number = read_line_number(true) ^ 0b0100'0000'0100'0000;
-			const auto high = uint8_t(number >> 8);
-			const auto low = uint8_t(number);
+				if(statement_start && (keyword.flags & Flags::PseudoVariable)) {
+					// Adjust token.
+					result.back() += 0x40;
+				}
 
-			result.push_back(0x8d);
-			result.push_back(0b0100'0000 | ((low & 0b1100'0000) >> 2) | ((high & 0b1100'0000) >> 4));
-			result.push_back(0b0100'0000 | (low & 0b0011'1111));
-			result.push_back(0b0100'0000 | (high & 0b0011'1111));
-		}
-
-		void replace(const std::string &n) {
-			for(const auto c: n) source_line_ -= c == '\n';
-			next_.insert(next_.end(), n.rbegin(), n.rend());
-		}
-
-		void replace(char n) {
-			source_line_ -= n == '\n';
-			next_.push_back(n);
-		}
-
-		char next() {
-			if(!next_.empty()) {
-				const auto n = next_.back();
-				next_.pop_back();
-				source_line_ += n == '\n';
-				return n;
+				statement_start &= !(keyword.flags & Flags::Middle);
+				statement_start |= keyword.flags & Flags::Start;
+				continue;
 			}
 
-			// Read a character from the file, ignoring \r and
-			// keeping track of the current line.
-			int next = 0;
-			do {				next = fgetc(input_);
-			} while(next == '\r');
-			if(feof(input_)) return 0;
+			// If here: no token was found. So copy at least one character
+			// from the input and possibly more.
+			const auto ch = next();
+			if(ch == '\n') return;
 
-			source_line_ += next == '\n';
-			return static_cast<char>(next);
+			result.push_back(ch);
+			switch(ch) {
+				case ':':
+					// Go back into start mode after each colon.
+					statement_start = true;
+				break;
+
+				case '*':
+					// If a * is encountered while in start mode, blindly copy from it to
+					// the end of the line.
+					if(statement_start) {
+						copy_while([](int) { return true; });
+					}
+				break;
+
+				case '"': {
+					// Copy an entire string.
+					const auto exit_reason = copy_while([](const int ch) { return ch != '"'; });
+					if(exit_reason != ExitReason::Predicate) {
+						throw_error(Error::Type::BadStringLiteral);
+					}
+				} break;
+
+				case '&':
+					// Copy an entire hex number.
+					copy_while([](const int ch) {
+						return
+							(ch >= '0' && ch <= '9') ||
+							(ch >= 'A' && ch <= 'F');
+					});
+				break;
+
+				default:
+					// This is a variable name or number, copy it all.
+					if(isalpha(ch)) {
+						copy_while(isalnum);
+					}
+				break;
+			}
+		}
+	}
+
+	int read_line_number(const bool retain_whitespace) {
+		// Consume whitespace, possibly copying it.
+		if(retain_whitespace) {
+			copy_while(isspace);
+		} else {
+			consume(isspace, [](char) {});
 		}
 
-	private:
-		FILE *input_ = stdin;
-		std::string next_;
-		int source_line_ = 1;
-
-		void throw_error(Error::Type type) const {
-			throw Error{type, source_line_};
+		// Perform validity check.
+		const auto ch = next();
+		if(!isdigit(ch)) {
+			throw_error(Error::Type::BadLineNumber);
 		}
-	} importer(input);
+		replace(ch);
+
+		int line_number = 0;
+		consume(isdigit, [&](const char num) {
+			line_number = (line_number * 10) + (num - '0');
+			if(line_number > 32767) {
+				throw_error(Error::Type::BadLineNumber);
+			}
+		});
+		return line_number;
+	}
+
+	void tokenise_line_number() {
+		// PrŽcis on format:
+		//
+		// $8d is the token for a line number; the three subsequent bytes all have
+		// 01 as their top two bits and some other portion of the original bits beneath.
+		// Bit 6 of both bytes of the target line number is inverted.
+
+		const int number = read_line_number(true) ^ 0b0100'0000'0100'0000;
+		const auto high = uint8_t(number >> 8);
+		const auto low = uint8_t(number);
+
+		result.push_back(0x8d);
+		result.push_back(0b0100'0000 | ((low & 0b1100'0000) >> 2) | ((high & 0b1100'0000) >> 4));
+		result.push_back(0b0100'0000 | (low & 0b0011'1111));
+		result.push_back(0b0100'0000 | (high & 0b0011'1111));
+	}
+
+	void replace(const std::string &n) {
+		for(const auto c: n) source_line_ -= c == '\n';
+		next_.insert(next_.end(), n.rbegin(), n.rend());
+	}
+
+	void replace(const char n) {
+		source_line_ -= n == '\n';
+		next_.push_back(n);
+	}
+
+	char next() {
+		if(!next_.empty()) {
+			const auto n = next_.back();
+			next_.pop_back();
+			source_line_ += n == '\n';
+			return n;
+		}
+
+		// Read a character from the file, ignoring \r and
+		// keeping track of the current line.
+		int next = 0;
+		do {
+			next = fgetc(input_);
+		} while(next == '\r');
+		if(feof(input_)) return 0;
+
+		source_line_ += next == '\n';
+		return static_cast<char>(next);
+	}
+
+private:
+	FILE *input_ = stdin;
+	std::string next_;
+	int source_line_ = 1;
+
+	void throw_error(Error::Type type) const {
+		throw Error{type, source_line_};
+	}
+
+	enum class ExitReason {
+		EndOfLine,
+		EndOfFile,
+		Predicate,
+	};
+	ExitReason consume(const std::function<int(int)> &predicate, const std::function<void(char)> &consumer) {
+		while(true) {
+			char ch = next();
+			if(feof(input_)) return ExitReason::EndOfFile;
+			if(ch == '\n') {
+				replace(ch);
+				return ExitReason::EndOfLine;
+			}
+			if(!predicate(ch)) {
+				replace(ch);
+				return ExitReason::Predicate;
+			}
+			consumer(ch);
+		}
+	}
+
+	ExitReason copy_while(const std::function<int(int)> &predicate) {
+		return consume(predicate, [&](char ch) { result.push_back(ch);});
+	}
+};
+}
+
+std::vector<uint8_t> import(FILE *const input) {
+	Importer importer(input);
 	importer.tokenise();
 
 	// Append "end of program".
@@ -488,5 +463,4 @@ std::vector<uint8_t> import(FILE *input) {
 	importer.result.push_back(0xff);
 	return importer.result;
 }
-
 }
