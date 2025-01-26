@@ -194,7 +194,7 @@ const Trie<char, Keyword> tokens = {
 struct Importer {
 	Importer(FILE *const input) : input_(input) {}
 
-	void tokenise() {
+	std::vector<uint8_t> tokenise() {
 		while(!feof(input_)) {
 			// Get line number.
 			const auto line_number = read_line_number(false);
@@ -216,9 +216,12 @@ struct Importer {
 			if(line_length > 255) throw_error(Error::Type::LineTooLong);
 			result[size_position] = uint8_t(line_length);
 		}
-	}
 
-	std::vector<uint8_t> result;
+		result.push_back(0x0d);
+		result.push_back(0xff);
+
+		return result;
+	}
 
 private:
 	void tokenise_line() {
@@ -420,11 +423,6 @@ private:
 		return static_cast<char>(next);
 	}
 
-private:
-	FILE *input_ = stdin;
-	std::string next_;
-	int source_line_ = 1;
-
 	void throw_error(Error::Type type) const {
 		throw Error{type, source_line_};
 	}
@@ -453,16 +451,15 @@ private:
 	ExitReason copy_while(const std::function<int(int)> &predicate) {
 		return consume(predicate, [&](char ch) { result.push_back(ch);});
 	}
+
+	std::vector<uint8_t> result;
+	FILE *input_ = stdin;
+	std::string next_;
+	int source_line_ = 1;
 };
 }
 
 std::vector<uint8_t> import(FILE *const input) {
-	Importer importer(input);
-	importer.tokenise();
-
-	// Append "end of program".
-	importer.result.push_back(0x0d);
-	importer.result.push_back(0xff);
-	return importer.result;
+	return Importer(input).tokenise();
 }
 }
