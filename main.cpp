@@ -9,7 +9,10 @@
 
 namespace {
 
-struct UEFWriter {
+class UEFWriter {
+private:
+	using CRCGenerator = CRC::Generator<uint16_t, 0x0000, 0x0000, false, false>;
+
 public:
 	UEFWriter(const std::string &file_name) {
 		file_ = fopen(file_name.c_str(), "wb");
@@ -26,7 +29,7 @@ public:
 
 	struct Chunk {
 	public:
-		Chunk(uint16_t id, FILE *file) : id_(id), file_(file) {}
+		Chunk(uint16_t id, FILE *file, CRCGenerator &crc_generator) : id_(id), file_(file), crc_generator_(crc_generator) {}
 
 		~Chunk() {
 			// Write chunk ID.
@@ -54,8 +57,7 @@ public:
 				chunk_contents_.push_back(*it);
 			}
 			if(append_crc) {
-				CRC::Generator<uint16_t, 0x0000, 0x0000, false, false> crc_generator(0x1021);
-				const uint16_t crc = crc_generator.compute_crc(begin, end);
+				const uint16_t crc = crc_generator_.compute_crc(begin, end);
 				chunk_contents_.push_back(uint8_t(crc >> 8));
 				chunk_contents_.push_back(uint8_t(crc >> 0));
 			}
@@ -69,11 +71,12 @@ public:
 	private:
 		uint16_t id_;
 		FILE *file_;
+		CRCGenerator &crc_generator_;
 		std::vector<uint8_t> chunk_contents_;
 	};
 
 	Chunk chunk(const uint16_t id) {
-		return Chunk(id, file_);
+		return Chunk(id, file_, crc_generator_);
 	}
 
 	~UEFWriter() {
@@ -82,6 +85,7 @@ public:
 
 private:
 	FILE *file_ = nullptr;
+	inline static CRCGenerator crc_generator_{0x1021};
 };
 
 void print_help() {
