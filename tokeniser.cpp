@@ -1,5 +1,5 @@
 #include "tokeniser.hpp"
-#include "tokeniser.hpp"
+#include "trie.hpp"
 
 #include <cctype>
 #include <cstdio>
@@ -14,38 +14,6 @@
 
 namespace Tokeniser {
 namespace {
-
-template <typename NodeKeyT, typename ValueT>
-struct Trie {
-	Trie() = default;
-	constexpr Trie(std::initializer_list<std::pair<const NodeKeyT *, ValueT>> values) noexcept {
-		for(const auto &value: values) {
-			insert(value.first, value.second);
-		}
-	}
-
-	const Trie *find(const NodeKeyT key) const {
-		const auto it = children_.find(key);
-		if(it == children_.end()) return nullptr;
-		return &it->second;
-	}
-
-	const std::optional<ValueT> &value() const {
-		return value_;
-	}
-
-private:
-	constexpr void insert(const NodeKeyT *key, const ValueT &value) {
-		if(*key) {
-			children_[*key].insert(key + 1, value);
-		} else {
-			value_ = value;
-		}
-	}
-
-	std::unordered_map<NodeKeyT, Trie> children_;
-	std::optional<ValueT> value_;
-};
 
 enum Flags: uint8_t {
 	PseudoVariable = 0x40,
@@ -192,17 +160,22 @@ const Trie<char, Keyword> tokens = {
 };
 
 struct Importer {
-	Importer(FILE *const input) : input_(input) {}
+	Importer(FILE *const input) : input_(input) {
+		result.reserve(32768);
+	}
 
 	std::vector<uint8_t> tokenise() {
+		// Outer loop for tokenising one line at a time.
 		while(!feof(input_)) {
 			// Get line number.
 			const auto line_number = read_line_number(false);
 
 			// Write start of line, including line number.
-			result.push_back(0x0d);
-			result.push_back(uint8_t(line_number >> 8));
-			result.push_back(uint8_t(line_number));
+			result.insert(result.end(), {
+				0x0d,
+				uint8_t(line_number >> 8),
+				uint8_t(line_number >> 0)
+			});
 
 			// Reserve a spot for line length.
 			const auto size_position = result.size();
@@ -213,12 +186,14 @@ struct Importer {
 
 			// Set line length.
 			const auto line_length = 3 + result.size() - size_position;
-			if(line_length > 255) throw_error(Error::Type::LineTooLong);
+			if(line_length >= 255) throw_error(Error::Type::LineTooLong);
 			result[size_position] = uint8_t(line_length);
 		}
 
-		result.push_back(0x0d);
-		result.push_back(0xff);
+		// Store program terminator.
+		result.insert(result.end(), {
+			0x0d, 0xff
+		});
 
 		return result;
 	}
@@ -242,7 +217,7 @@ private:
 				}
 
 				// Keep a copy of characters encountered to get to the current state,
-				// in case a conditional token is arrived at and isn't ultimately tokenised.
+				// in case a conditional token is found and isn't ultimately tokenised.
 				const auto ch = next();
 				input_text.push_back(ch);
 
@@ -293,7 +268,8 @@ private:
 				}
 
 				if(statement_start && (keyword.flags & Flags::PseudoVariable)) {
-					// Adjust token.
+					// Adjust token; if it was at the start and is a pseudo-variable then it should
+					// be encoded as its function not its statement. Which is achieved by adding $40.
 					result.back() += 0x40;
 				}
 
@@ -306,8 +282,12 @@ private:
 			// from the input and possibly more.
 			const auto ch = next();
 			if(ch == '\n') return;
-
 			result.push_back(ch);
+
+			// Treat any non-token as ending start-of-statement mode.
+			// E.g. this avoids the risk of `LET A = 10 * PI:PRINT` still thinking it's
+			// in start-of-statement mode when it reaches the asterisk and then copying
+			// the rest of the line verbatim rather than tokenising PI and PRINT.
 			const bool was_start = statement_start;
 			statement_start = false;
 			switch(ch) {
@@ -324,13 +304,12 @@ private:
 					}
 				break;
 
-				case '"': {
+				case '"':
 					// Copy an entire string.
-					const auto exit_reason = copy_while([](const int ch) { return ch != '"'; });
-					if(exit_reason != ExitReason::Predicate) {
+					if(copy_while([](const int ch) { return ch != '"'; }) != ExitReason::Predicate) {
 						throw_error(Error::Type::BadStringLiteral);
 					}
-				} break;
+				break;
 
 				case '&':
 					// Copy an entire hex number.
@@ -342,8 +321,8 @@ private:
 				break;
 
 				default:
-					// This is a variable name or number, copy it all.
-					if(isalpha(ch)) {
+					// If this is a variable name or number, copy it all.
+					if(isalnum(ch)) {
 						copy_while(isalnum);
 					}
 				break;
@@ -366,6 +345,7 @@ private:
 		}
 		replace(ch);
 
+		// Obtain line number, but throw it goes out of bounds.
 		int line_number = 0;
 		consume(isdigit, [&](const char num) {
 			line_number = (line_number * 10) + (num - '0');
@@ -377,8 +357,6 @@ private:
 	}
 
 	void tokenise_line_number() {
-		// Précis on format:
-		//
 		// $8d is the token for a line number; the three subsequent bytes all have
 		// 01 as their top two bits and some other portion of the original bits beneath.
 		// Bit 6 of both bytes of the target line number is inverted.
@@ -453,7 +431,7 @@ private:
 	}
 
 	std::vector<uint8_t> result;
-	FILE *input_ = stdin;
+	FILE *input_;
 	std::string next_;
 	int source_line_ = 1;
 };
