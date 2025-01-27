@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <exception>
 #include <iostream>
+#include <string>
 
 namespace {
 
