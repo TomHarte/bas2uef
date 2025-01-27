@@ -3,6 +3,7 @@
 #include <initializer_list>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 
 /// Implements a fairly-vanilla retrieval tree.
 ///

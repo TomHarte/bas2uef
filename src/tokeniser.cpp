@@ -1,10 +1,12 @@
 #include "tokeniser.hpp"
 #include "trie.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <functional>
-#include <map>
+#include <vector>
+#include <string>
 
 /*
 	Implements parsing of BBC BASIC v2.
