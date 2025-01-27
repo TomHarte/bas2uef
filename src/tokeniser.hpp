@@ -25,6 +25,7 @@ struct Error {
 				case Type::LineTooLong:			return "LineTooLong";
 				case Type::BadStringLiteral:	return "BadStringLiteral";
 			}
+			return "InvalidError";
 		}() + " at line " + std::to_string(line_number);
 	}
 };

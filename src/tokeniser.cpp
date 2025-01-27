@@ -3,6 +3,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <functional>
 #include <map>
 
 /*
