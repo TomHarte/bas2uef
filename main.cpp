@@ -162,11 +162,8 @@ int main(int argc, char *argv[]) try {
 			0x00, 0x00, 0x00, 0x00,									// Four unused bytes.
 		}, true);
 		block.append(block_begin, begin, true);
-
+		writer.chunk(0x0110).append(std::vector{0x58, 0x02});
 		++block_number;
-		if(begin != end) {
-			writer.chunk(0x0110).append(std::vector{0x58, 0x02});
-		}
 	}
 
 	return 0;
