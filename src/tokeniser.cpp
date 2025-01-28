@@ -313,6 +313,8 @@ private:
 					if(copy_while([](const int ch) { return ch != '"'; }) != ExitReason::Predicate) {
 						throw_error(Error::Type::BadStringLiteral);
 					}
+					// Copy the closing quotation mark.
+					result.push_back(next());
 				break;
 
 				case '&':
