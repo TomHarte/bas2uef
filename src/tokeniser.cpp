@@ -266,8 +266,8 @@ private:
 					// Means only that a line number *might* be next.
 					copy_while(isspace);
 					const auto ch = next();
+					replace(ch);
 					if(isdigit(ch)) {
-						replace(ch);
 						tokenise_line_number();
 					}
 				}
