@@ -263,7 +263,13 @@ private:
 				}
 
 				if(keyword.flags & Flags::LineNumber) {
-					tokenise_line_number();
+					// Means only that a line number *might* be next.
+					copy_while(isspace);
+					const auto ch = next();
+					if(isdigit(ch)) {
+						replace(ch);
+						tokenise_line_number();
+					}
 				}
 
 				if(keyword.flags & Flags::REM) {
