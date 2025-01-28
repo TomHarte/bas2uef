@@ -172,6 +172,7 @@ struct Importer {
 		while(!feof(input_)) {
 			// Get line number.
 			const auto line_number = read_line_number(false);
+			if(line_number < 0) break;
 
 			// Write start of line, including line number.
 			result.insert(result.end(), {
@@ -339,6 +340,11 @@ private:
 			copy_while(isspace);
 		} else {
 			consume(isspace, [](char) {});
+		}
+
+		// Allow an empty final line.
+		if(feof(input_) && !retain_whitespace) {
+			return -1;
 		}
 
 		// Perform validity check.
